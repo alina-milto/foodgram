@@ -1,0 +1,36 @@
+name: Foodgram workflow
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - uses: docker/build-push-action@v4
+        with:
+          context: ./backend/
+          push: true
+          tags: azulqilin/foodgram_backend:latest
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build_and_push
+    steps:
+      - uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd foodgram
+            docker compose -f infra/docker-compose.yml pull
+            docker compose -f infra/docker-compose.yml down
+            docker compose -f infra/docker-compose.yml up -d
