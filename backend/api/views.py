@@ -114,9 +114,13 @@ class UserApiViewSet (UserViewSet):
     )
     def subscriptions(self, request):
         authors = User.objects.filter(followers__follower=request.user)
+        pages = self.paginate_queryset(authors)
         serializer = SubscriptionSerializer(
-            authors, many=True, context={'request': request})
-        return Response(serializer.data)
+            pages,
+            many=True,
+            context={'request': request}
+        )
+        return self.get_paginated_response(serializer.data)
 
 
 class TagViewSet(ReadOnlyModelViewSet):
