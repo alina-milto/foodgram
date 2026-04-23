@@ -35,7 +35,7 @@ def redirect_short_link(request, pk):
     return redirect(f'/recipes/{pk}/')
 
 
-class UserApiViewSet (UserViewSet):
+class UserApiViewSet(UserViewSet):
     @action(
         methods=['put', 'delete'],
         detail=False,
@@ -70,17 +70,17 @@ class UserApiViewSet (UserViewSet):
     )
     def subscribe(self, request, id=None):
         author = get_object_or_404(User, id=id)
-
+        subscription = Subscription.objects.filter(
+            follower=request.user,
+            following=author
+        )
         if request.method == 'POST':
             if request.user == author:
                 return Response(
                     {'errors': 'Нельзя подписаться на самого себя'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            if Subscription.objects.filter(
-                follower=request.user,
-                following=author
-            ).exists():
+            if subscription.exists():
                 return Response(
                     {'errors': 'Вы уже подписаны на этого пользователя'},
                     status=status.HTTP_400_BAD_REQUEST
@@ -94,10 +94,6 @@ class UserApiViewSet (UserViewSet):
                 context={'request': request}
             )
             return Response(serializer.data, status=status.HTTP_201_CREATED)
-        subscription = Subscription.objects.filter(
-            follower=request.user,
-            following=author
-        )
         if not subscription.exists():
             return Response(
                 {'errors': 'Вы не подписаны на этого пользователя'},
@@ -148,39 +144,37 @@ class RecipeViewSet(ModelViewSet):
             return RecipeReadSerializer
         return RecipeWriteSerializer
 
-    @action(
-        methods=['post', 'delete'],
-        detail=True,
-        url_path='favorite',
-        permission_classes=[
-            IsAuthenticated
-        ],
-    )
-    def favorite(self, request, pk=None):
+    def add_or_remove(self, request, pk, model):
         recipe = get_object_or_404(Recipe, id=pk)
-
+        relation = model.objects.filter(user=request.user, recipe=recipe)
+        name = model._meta.verbose_name
         if request.method == 'POST':
-            if Favorite.objects.filter(
-                user=request.user,
-                recipe=recipe
-            ).exists():
+            if relation.exists():
                 return Response(
-                    {'errors': 'Рецепт уже добавлен в избранное.'},
+                    {'errors': f'Рецепт уже добавлен в список «{name}».'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            Favorite.objects.create(user=request.user, recipe=recipe)
+            model.objects.create(user=request.user, recipe=recipe)
             serializer = RecipeMinifiedSerializer(
                 recipe, context={'request': request}
             )
             return Response(serializer.data, status=status.HTTP_201_CREATED)
-        favorite = Favorite.objects.filter(user=request.user, recipe=recipe)
-        if not favorite.exists():
+        if not relation.exists():
             return Response(
-                {'errors': 'Рецепта нет в избранном.'},
+                {'errors': f'Рецепта нет в списке «{name}».'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        favorite.delete()
+        relation.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(
+        methods=['post', 'delete'],
+        detail=True,
+        url_path='favorite',
+        permission_classes=[IsAuthenticated],
+    )
+    def favorite(self, request, pk=None):
+        return self.add_or_remove(request, pk, Favorite)
 
     @action(
         methods=['post', 'delete'],
@@ -191,31 +185,7 @@ class RecipeViewSet(ModelViewSet):
         ],
     )
     def shopping_cart(self, request, pk=None):
-        recipe = get_object_or_404(Recipe, id=pk)
-
-        if request.method == 'POST':
-            if ShoppingCart.objects.filter(
-                user=request.user,
-                recipe=recipe
-            ).exists():
-                return Response(
-                    {'errors': 'Рецепт уже добавлен в корзину.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            ShoppingCart.objects.create(user=request.user, recipe=recipe)
-            serializer = RecipeMinifiedSerializer(
-                recipe, context={'request': request}
-            )
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        shopping_cart = ShoppingCart.objects.filter(
-            user=request.user, recipe=recipe)
-        if not shopping_cart.exists():
-            return Response(
-                {'errors': 'Рецепта нет в корзине.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        shopping_cart.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return self.add_or_remove(request, pk, ShoppingCart)
 
     @action(
         methods=['get'],

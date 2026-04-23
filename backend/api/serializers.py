@@ -1,6 +1,3 @@
-import base64
-
-from django.core.files.base import ContentFile
 from djoser.serializers import (
     UserCreateSerializer as DjoserUserCreateSerializer,
 )
@@ -17,17 +14,7 @@ from recipes.models import (
 )
 from users.models import Subscription, User
 
-
-class Base64ImageField(serializers.ImageField):
-    def to_internal_value(self, data):
-        if isinstance(data, str) and data.startswith('data:image'):
-            metadata, image_code = data.split(';base64,')
-            extension = metadata.split('/')[-1]
-            data = ContentFile(
-                base64.b64decode(image_code),
-                name=f'temp.{extension}'
-            )
-        return super().to_internal_value(data)
+from .fields import Base64ImageField
 
 
 class UserCreateSerializer(DjoserUserCreateSerializer):
@@ -131,20 +118,17 @@ class RecipeReadSerializer(serializers.ModelSerializer):
             'cooking_time',
         )
 
-    def get_is_favorited(self, obj):
+    def is_in_user_list(self, obj, model):
         request = self.context.get('request')
         if request is None or request.user.is_anonymous:
             return False
-        return Favorite.objects.filter(user=request.user, recipe=obj).exists()
+        return model.objects.filter(user=request.user, recipe=obj).exists()
+
+    def get_is_favorited(self, obj):
+        return self.is_in_user_list(obj, Favorite)
 
     def get_is_in_shopping_cart(self, obj):
-        request = self.context.get('request')
-        if request is None or request.user.is_anonymous:
-            return False
-        return ShoppingCart.objects.filter(
-            user=request.user,
-            recipe=obj
-        ).exists()
+        return self.is_in_user_list(obj, ShoppingCart)
 
 
 class RecipeIngredientWriteSerializer(serializers.ModelSerializer):
@@ -175,6 +159,29 @@ class RecipeWriteSerializer(serializers.ModelSerializer):
             'cooking_time',
         )
 
+    def validate_ingredients(self, value):
+        ingredient_id = [item['id'] for item in value]
+        if len(ingredient_id) != len(set(ingredient_id)):
+            raise serializers.ValidationError(
+                'Ингредиенты не должны повторяться.'
+            )
+        return value
+
+    def validate_tags(self, value):
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError(
+                'Теги не должны повторяться.'
+            )
+        return value
+
+    def set_tags_and_ingredients(self, recipe, tags, ingredients):
+        recipe.tags.set(tags)
+        RecipeIngredient.objects.bulk_create([RecipeIngredient(
+            recipe=recipe,
+            ingredient=ingredient['id'],
+            amount=ingredient['amount']
+        ) for ingredient in ingredients])
+
     def create(self, validated_data):
         ingredients = validated_data.pop('ingredients')
         tags = validated_data.pop('tags')
@@ -182,29 +189,15 @@ class RecipeWriteSerializer(serializers.ModelSerializer):
             author=self.context['request'].user,
             **validated_data
         )
-        recipe.tags.set(tags)
-        for ingredient in ingredients:
-            RecipeIngredient.objects.create(
-                recipe=recipe,
-                ingredient=ingredient['id'],
-                amount=ingredient['amount']
-            )
+        self.set_tags_and_ingredients(recipe, tags, ingredients)
         return recipe
 
     def update(self, instance, validated_data):
-        ingredients = validated_data.pop('ingredients', None)
-        tags = validated_data.pop('tags', None)
+        ingredients = validated_data.pop('ingredients')
+        tags = validated_data.pop('tags')
         super().update(instance, validated_data)
-        if tags is not None:
-            instance.tags.set(tags)
-        if ingredients is not None:
-            instance.recipe_ingredients.all().delete()
-            for ingredient in ingredients:
-                RecipeIngredient.objects.create(
-                    recipe=instance,
-                    ingredient=ingredient['id'],
-                    amount=ingredient['amount']
-                )
+        instance.recipe_ingredients.all().delete()
+        self.set_tags_and_ingredients(instance, tags, ingredients)
         return instance
 
     def to_representation(self, instance):
