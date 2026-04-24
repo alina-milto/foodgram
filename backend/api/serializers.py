@@ -13,7 +13,6 @@ from recipes.models import (
     Tag,
 )
 from users.models import Subscription, User
-
 from .fields import Base64ImageField
 
 

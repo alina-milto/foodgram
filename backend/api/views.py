@@ -74,13 +74,14 @@ class UserApiViewSet(UserViewSet):
             follower=request.user,
             following=author
         )
+        is_subscribed = subscription.exists()
         if request.method == 'POST':
             if request.user == author:
                 return Response(
                     {'errors': 'Нельзя подписаться на самого себя'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            if subscription.exists():
+            if is_subscribed:
                 return Response(
                     {'errors': 'Вы уже подписаны на этого пользователя'},
                     status=status.HTTP_400_BAD_REQUEST
@@ -94,7 +95,7 @@ class UserApiViewSet(UserViewSet):
                 context={'request': request}
             )
             return Response(serializer.data, status=status.HTTP_201_CREATED)
-        if not subscription.exists():
+        if not is_subscribed:
             return Response(
                 {'errors': 'Вы не подписаны на этого пользователя'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -148,8 +149,9 @@ class RecipeViewSet(ModelViewSet):
         recipe = get_object_or_404(Recipe, id=pk)
         relation = model.objects.filter(user=request.user, recipe=recipe)
         name = model._meta.verbose_name
+        in_list = relation.exists()
         if request.method == 'POST':
-            if relation.exists():
+            if in_list:
                 return Response(
                     {'errors': f'Рецепт уже добавлен в список «{name}».'},
                     status=status.HTTP_400_BAD_REQUEST
@@ -159,7 +161,7 @@ class RecipeViewSet(ModelViewSet):
                 recipe, context={'request': request}
             )
             return Response(serializer.data, status=status.HTTP_201_CREATED)
-        if not relation.exists():
+        if not in_list:
             return Response(
                 {'errors': f'Рецепта нет в списке «{name}».'},
                 status=status.HTTP_400_BAD_REQUEST
