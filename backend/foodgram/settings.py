@@ -1,3 +1,9 @@
+"""Django settings for the Foodgram project.
+
+All secrets and environment-specific values are read from
+environment variables (see ``.env.example``).
+"""
+
 import os
 from pathlib import Path
 
@@ -95,7 +101,7 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 
-LANGUAGE_CODE = 'ru-ru'
+LANGUAGE_CODE = 'en-us'
 
 TIME_ZONE = 'UTC'
 
