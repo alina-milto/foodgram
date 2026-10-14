@@ -1,6 +1,6 @@
 """API views for users, subscriptions, tags, ingredients and recipes."""
 
-from django.db.models import Sum
+from django.db.models import Count, Exists, OuterRef, Prefetch, Sum
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect
 from django_filters.rest_framework import DjangoFilterBackend
@@ -35,11 +35,32 @@ from users.models import Subscription, User
 
 def redirect_short_link(request, pk):
     """Redirect a short link ``/s/<pk>/`` to the recipe page."""
-    return redirect(f'/recipes/{pk}/')
+    recipe = get_object_or_404(Recipe, pk=pk)
+    return redirect(f'/recipes/{recipe.pk}/')
+
+
+def annotate_is_subscribed(queryset, user):
+    """Add ``is_subscribed`` to users: does ``user`` follow each of them."""
+    if not user.is_authenticated:
+        return queryset
+    return queryset.annotate(
+        is_subscribed=Exists(
+            Subscription.objects.filter(
+                follower=user,
+                following=OuterRef('pk'),
+            )
+        )
+    )
 
 
 class UserApiViewSet(UserViewSet):
     """Djoser user endpoints extended with avatar and subscriptions."""
+
+    def get_queryset(self):
+        """Return users annotated with the subscription status."""
+        return annotate_is_subscribed(
+            super().get_queryset(), self.request.user
+        )
 
     @action(
         methods=['put', 'delete'],
@@ -118,7 +139,12 @@ class UserApiViewSet(UserViewSet):
     )
     def subscriptions(self, request):
         """Return a paginated list of authors the user is subscribed to."""
-        authors = User.objects.filter(followers__follower=request.user)
+        authors = annotate_is_subscribed(
+            User.objects.filter(followers__follower=request.user),
+            request.user,
+        ).annotate(
+            recipes_count=Count('recipes'),
+        ).prefetch_related('recipes').order_by('username')
         pages = self.paginate_queryset(authors)
         serializer = SubscriptionSerializer(
             pages,
@@ -153,10 +179,38 @@ class RecipeViewSet(ModelViewSet):
     and only the author can change or delete a recipe.
     """
 
-    queryset = Recipe.objects.all()
     permission_classes = (IsAuthorOrReadOnly,)
     filter_backends = (DjangoFilterBackend,)
     filterset_class = RecipeFilter
+
+    def get_queryset(self):
+        """Return recipes with related data loaded in few queries.
+
+        Tags, ingredients and authors are prefetched. For authenticated
+        users each recipe is annotated with ``is_favorited`` and
+        ``is_in_shopping_cart``, and each author with ``is_subscribed``.
+        """
+        user = self.request.user
+        queryset = Recipe.objects.prefetch_related(
+            'tags',
+            'recipe_ingredients__ingredient',
+            Prefetch(
+                'author',
+                queryset=annotate_is_subscribed(User.objects.all(), user),
+            ),
+        )
+        if user.is_authenticated:
+            queryset = queryset.annotate(
+                is_favorited=Exists(
+                    Favorite.objects.filter(user=user, recipe=OuterRef('pk'))
+                ),
+                is_in_shopping_cart=Exists(
+                    ShoppingCart.objects.filter(
+                        user=user, recipe=OuterRef('pk')
+                    )
+                ),
+            )
+        return queryset
 
     def get_serializer_class(self):
         """Use the read serializer for reading, the write one otherwise."""
@@ -253,5 +307,6 @@ class RecipeViewSet(ModelViewSet):
     )
     def get_link(self, request, pk=None):
         """Return a short link to the recipe."""
-        short_link = request.build_absolute_uri(f'/s/{pk}/')
+        recipe = self.get_object()
+        short_link = request.build_absolute_uri(f'/s/{recipe.pk}/')
         return Response({'short-link': short_link})

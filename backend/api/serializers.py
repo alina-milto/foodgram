@@ -4,6 +4,7 @@ from djoser.serializers import (
     UserCreateSerializer as DjoserUserCreateSerializer,
 )
 from djoser.serializers import UserSerializer as DjoserUserSerializer
+from django.db import transaction
 from rest_framework import serializers
 
 from foodgram.constants import (
@@ -57,7 +58,13 @@ class UserSerializer(DjoserUserSerializer):
         )
 
     def get_is_subscribed(self, obj):
-        """Return True if the current user is subscribed to ``obj``."""
+        """Return True if the current user is subscribed to ``obj``.
+
+        Uses the ``is_subscribed`` annotation when the view provides it,
+        so lists do not run a separate query for every user.
+        """
+        if hasattr(obj, 'is_subscribed'):
+            return obj.is_subscribed
         request = self.context.get('request')
         if request is None or request.user.is_anonymous:
             return False
@@ -151,10 +158,14 @@ class RecipeReadSerializer(serializers.ModelSerializer):
 
     def get_is_favorited(self, obj):
         """Return True if the recipe is in the user's favorites."""
+        if hasattr(obj, 'is_favorited'):
+            return obj.is_favorited
         return self.is_in_user_list(obj, Favorite)
 
     def get_is_in_shopping_cart(self, obj):
         """Return True if the recipe is in the user's shopping cart."""
+        if hasattr(obj, 'is_in_shopping_cart'):
+            return obj.is_in_shopping_cart
         return self.is_in_user_list(obj, ShoppingCart)
 
 
@@ -233,6 +244,7 @@ class RecipeWriteSerializer(serializers.ModelSerializer):
             amount=ingredient['amount']
         ) for ingredient in ingredients])
 
+    @transaction.atomic
     def create(self, validated_data):
         """Create a recipe authored by the current user."""
         ingredients = validated_data.pop('ingredients')
@@ -244,6 +256,7 @@ class RecipeWriteSerializer(serializers.ModelSerializer):
         self.set_tags_and_ingredients(recipe, tags, ingredients)
         return recipe
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         """Update a recipe, replacing its tags and ingredients."""
         ingredients = validated_data.pop('ingredients')
@@ -286,12 +299,18 @@ class SubscriptionSerializer(UserSerializer):
         )
 
     def get_recipes(self, obj):
-        """Return the author's recipes, limited by ``recipes_limit``."""
+        """Return the author's recipes, limited by ``recipes_limit``.
+
+        An invalid or negative ``recipes_limit`` is ignored.
+        """
         request = self.context.get('request')
-        recipes_limit = request.query_params.get('recipes_limit')
         recipes = obj.recipes.all()
-        if recipes_limit:
-            recipes = recipes[:int(recipes_limit)]
+        try:
+            limit = int(request.query_params.get('recipes_limit'))
+        except (TypeError, ValueError):
+            limit = None
+        if limit is not None and limit >= 0:
+            recipes = recipes[:limit]
         serializer = RecipeMinifiedSerializer(
             recipes,
             many=True,
@@ -301,4 +320,6 @@ class SubscriptionSerializer(UserSerializer):
 
     def get_recipes_count(self, obj):
         """Return the total number of the author's recipes."""
+        if hasattr(obj, 'recipes_count'):
+            return obj.recipes_count
         return obj.recipes.count()
