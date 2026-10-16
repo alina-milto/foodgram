@@ -56,6 +56,12 @@ def annotate_is_subscribed(queryset, user):
 class UserApiViewSet(UserViewSet):
     """Djoser user endpoints extended with avatar and subscriptions."""
 
+    def get_permissions(self):
+        """Allow only authenticated users to use the ``me`` endpoint."""
+        if self.action == 'me':
+            return (IsAuthenticated(),)
+        return super().get_permissions()
+
     def get_queryset(self):
         """Return users annotated with the subscription status."""
         return annotate_is_subscribed(
