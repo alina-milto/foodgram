@@ -2,3 +2,8 @@
 profile = "black"
 line_length = 79
 known_first_party = ["api", "users", "recipes", "foodgram"]
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "tests.settings"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
